@@ -25,12 +25,14 @@ desert_robot/
 │   ├── hello_isaac_scene.py
 │   ├── desert_heightfield_scene.py
 │   ├── view_usd_scene.py
-│   └── capture_camera_frame.py
+│   ├── capture_camera_frame.py
+│   └── live_rover_path_demo.py
 ├── scripts/
 │   ├── check_env.py
 │   ├── run_minimal_planning_demo.py
 │   ├── build_local_heightfield_from_capture.py
-│   └── plan_local_path_from_costmap.py
+│   ├── plan_local_path_from_costmap.py
+│   └── live_perception_planning_demo.py
 ├── src/desert_robot/
 │   ├── maps/
 │   ├── perception/
@@ -126,6 +128,10 @@ MPLCONFIGDIR=/tmp/matplotlib-desert-robot python scripts/plan_local_path_from_co
 # 5. 打开/保存实时感知规划 dashboard
 python scripts/live_perception_planning_demo.py --watch
 MPLCONFIGDIR=/tmp/matplotlib-desert-robot python scripts/live_perception_planning_demo.py --save-snapshot
+
+# 6. 在 Isaac GUI 里查看小车沿规划路径运动
+source /home/gx/env_isaacsim/bin/activate
+python isaac/live_rover_path_demo.py
 ```
 
 ## 6. 输出结果说明
@@ -385,6 +391,72 @@ face_vertex_indices
 
 启动 Isaac GUI 并持续 update，用于在线查看 USD 场景。
 
+### isaac/live_rover_path_demo.py
+
+`parse_args()`
+
+解析 USD 场景、`local_path.npz`、`local_heightfield.npz`、小车速度和运行帧数。
+
+`main()`
+
+启动 Isaac GUI，打开沙漠 USD 场景，读取局部规划路径，把局部路径坐标转换到世界坐标，在场景中绘制路径点，并让 `/World/RoverPlaceholder` 沿路径循环运动。
+
+常用方式：
+
+```bash
+source /home/gx/env_isaacsim/bin/activate
+python isaac/live_rover_path_demo.py
+```
+
+短时间验证：
+
+```bash
+python isaac/live_rover_path_demo.py --frames 120
+```
+
+输出结果：
+
+```text
+Isaac GUI 中可以看到沙漠场景、小车占位体、起点/终点/路径点，以及小车沿 A* 路径移动。
+终端会打印打开的 USD、路径点数量和路径长度。
+```
+
+`_wait_for_stage()`
+
+等待 Isaac 把 USD stage 加载完成。
+
+`_load_world_path()`
+
+读取 `local_path.npz` 和 `local_heightfield.npz`，把路径从局部 costmap 行列坐标转换成 Isaac 世界坐标。
+
+`_safe_elevation(...)`
+
+为路径点取得地形高度；如果局部 heightfield 某个格子没有有效高度，用有效高度中位数兜底。
+
+`_draw_path_markers(...)`
+
+在 Isaac 场景中绘制起点、终点和若干白色路径点。
+
+`_draw_sphere(...)`
+
+创建路径标记球体，并设置位置、半径和颜色。
+
+`_set_active_camera()`
+
+把 GUI 视口切换到 `/World/Camera`，方便打开后直接看到当前沙漠场景。
+
+`_set_translate(...)`
+
+设置 prim 的平移位置；用于移动小车占位体和摆放路径标记。
+
+`_cumulative_distance(...)`
+
+计算路径上每个点对应的累计距离，用于按速度插值运动。
+
+`_interpolate_path(...)`
+
+根据目标行驶距离，在相邻路径点之间插值，得到当前小车位置。
+
 ## 9. scripts 函数说明
 
 ### scripts/run_minimal_planning_demo.py
@@ -555,6 +627,13 @@ Isaac GUI 查看三维场景：
 ```bash
 source /home/gx/env_isaacsim/bin/activate
 python isaac/view_usd_scene.py
+```
+
+Isaac GUI 查看小车沿规划路径运动：
+
+```bash
+source /home/gx/env_isaacsim/bin/activate
+python isaac/live_rover_path_demo.py
 ```
 
 查看感知/规划 dashboard：
