@@ -1,4 +1,5 @@
 from argparse import ArgumentParser
+import json
 from pathlib import Path
 import traceback
 
@@ -59,6 +60,7 @@ simulation_app = SimulationApp({"headless": True})
 import omni.replicator.core as rep  # noqa: E402
 import omni.usd  # noqa: E402
 from PIL import Image  # noqa: E402
+from pxr import Gf, Usd, UsdGeom  # noqa: E402
 
 
 def main() -> None:
@@ -98,9 +100,11 @@ def main() -> None:
     rgb_path = output_dir / "camera_rgb.png"
     depth_npy_path = output_dir / "camera_depth.npy"
     depth_png_path = output_dir / "camera_depth_mm.png"
+    camera_params_path = output_dir / "camera_params.json"
 
     _save_rgb(rgb, rgb_path)
     _save_depth(depth, depth_npy_path, depth_png_path)
+    _save_camera_params(stage, args.camera, args.width, args.height, camera_params_path)
 
     rgb_annotator.detach(render_product)
     depth_annotator.detach(render_product)
@@ -122,6 +126,7 @@ def main() -> None:
     print(f"Saved RGB: {rgb_path}", flush=True)
     print(f"Saved depth array: {depth_npy_path} ({depth_summary})", flush=True)
     print(f"Saved 16-bit depth PNG in millimeters: {depth_png_path}", flush=True)
+    print(f"Saved camera parameters: {camera_params_path}", flush=True)
 
 
 def _extract_array(data, annotator_name: str) -> np.ndarray:
@@ -148,6 +153,48 @@ def _save_depth(depth: np.ndarray, npy_path: Path, png_path: Path) -> None:
     depth_mm = np.nan_to_num(depth, nan=0.0, posinf=0.0, neginf=0.0)
     depth_mm = np.clip(depth_mm * 1000.0, 0.0, 65535.0).astype(np.uint16)
     Image.fromarray(depth_mm).save(png_path)
+
+
+def _save_camera_params(
+    stage: Usd.Stage,
+    camera_path: str,
+    width: int,
+    height: int,
+    path: Path,
+) -> None:
+    camera = UsdGeom.Camera(stage.GetPrimAtPath(camera_path))
+    focal_length = float(camera.GetFocalLengthAttr().Get())
+    horizontal_aperture = float(camera.GetHorizontalApertureAttr().Get())
+    vertical_aperture = float(camera.GetVerticalApertureAttr().Get())
+    clipping_range = camera.GetClippingRangeAttr().Get()
+    world_transform = camera.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+
+    fx = width * focal_length / horizontal_aperture
+    fy = height * focal_length / vertical_aperture
+    cx = width * 0.5
+    cy = height * 0.5
+
+    params = {
+        "camera_path": camera_path,
+        "resolution": {"width": width, "height": height},
+        "intrinsics": {
+            "fx": fx,
+            "fy": fy,
+            "cx": cx,
+            "cy": cy,
+            "focal_length": focal_length,
+            "horizontal_aperture": horizontal_aperture,
+            "vertical_aperture": vertical_aperture,
+        },
+        "clipping_range": [float(clipping_range[0]), float(clipping_range[1])],
+        "world_transform": _matrix_to_list(world_transform),
+    }
+
+    path.write_text(json.dumps(params, indent=2), encoding="utf-8")
+
+
+def _matrix_to_list(matrix: Gf.Matrix4d) -> list[list[float]]:
+    return [[float(matrix[row][col]) for col in range(4)] for row in range(4)]
 
 
 if __name__ == "__main__":
