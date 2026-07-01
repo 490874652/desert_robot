@@ -51,6 +51,8 @@ def main() -> None:
     print("Ground reference markers added.", flush=True)
     _add_obstacle_markers(stage, elevation, terrain.obstacle_mask, terrain.resolution)
     print("Obstacle markers added.", flush=True)
+    _add_semantic_markers(stage, elevation, terrain, terrain.resolution)
+    print("Semantic dune and vegetation markers added.", flush=True)
     _add_rover_placeholder(stage, elevation, terrain.resolution)
     print("Rover placeholder added.", flush=True)
     _add_goal_marker(stage, elevation, terrain.resolution)
@@ -78,6 +80,8 @@ def _create_world(stage) -> None:
     UsdPhysics.Scene.Define(stage, "/World/PhysicsScene")
     _create_material(stage, "/World/Materials/Sand", (0.74, 0.56, 0.33), roughness=0.92)
     _create_material(stage, "/World/Materials/Rock", (0.28, 0.24, 0.19), roughness=0.86)
+    _create_material(stage, "/World/Materials/Shrub", (0.17, 0.32, 0.14), roughness=0.78)
+    _create_material(stage, "/World/Materials/Vegetation", (0.23, 0.42, 0.16), roughness=0.74)
     _create_material(stage, "/World/Materials/Rover", (0.12, 0.18, 0.16), roughness=0.65)
     _create_material(stage, "/World/Materials/Goal", (0.18, 0.56, 0.22), roughness=0.55)
 
@@ -123,6 +127,65 @@ def _add_obstacle_markers(stage, elevation, obstacle_mask, resolution: float) ->
         rock.AddTranslateOp().Set(Gf.Vec3f(x, y, z))
         UsdPhysics.CollisionAPI.Apply(rock.GetPrim())
         _bind_material(stage, rock.GetPrim(), "/World/Materials/Rock")
+
+
+def _add_semantic_markers(stage, elevation, terrain, resolution: float) -> None:
+    _add_mask_markers(
+        stage=stage,
+        elevation=elevation,
+        mask=terrain.fixed_shrub_dune_mask,
+        resolution=resolution,
+        prim_prefix="/World/Semantics/FixedShrubDune",
+        material_path="/World/Materials/Shrub",
+        radius=0.18,
+        lift=0.28,
+        max_markers=48,
+    )
+    _add_mask_markers(
+        stage=stage,
+        elevation=elevation,
+        mask=terrain.small_vegetation_mask,
+        resolution=resolution,
+        prim_prefix="/World/Semantics/SmallVegetation",
+        material_path="/World/Materials/Vegetation",
+        radius=0.12,
+        lift=0.18,
+        max_markers=80,
+    )
+
+
+def _add_mask_markers(
+    stage,
+    elevation,
+    mask,
+    resolution: float,
+    prim_prefix: str,
+    material_path: str,
+    radius: float,
+    lift: float,
+    max_markers: int,
+) -> None:
+    ys, xs = mask.nonzero()
+    if ys.size == 0:
+        return
+
+    sample_count = min(max_markers, ys.size)
+    sample_indices = np.linspace(0, ys.size - 1, sample_count, dtype=int)
+    height, width = elevation.shape
+    x_offset = (width - 1) * resolution * 0.5
+    y_offset = (height - 1) * resolution * 0.5
+
+    for marker_id, index in enumerate(sample_indices):
+        row = int(ys[index])
+        col = int(xs[index])
+        x = col * resolution - x_offset
+        y = row * resolution - y_offset
+        z = float(elevation[row, col]) + lift
+
+        marker = UsdGeom.Sphere.Define(stage, f"{prim_prefix}_{marker_id:03d}")
+        marker.CreateRadiusAttr(radius)
+        marker.AddTranslateOp().Set(Gf.Vec3f(x, y, z))
+        _bind_material(stage, marker.GetPrim(), material_path)
 
 
 def _add_ground_reference(stage, elevation, resolution: float) -> None:

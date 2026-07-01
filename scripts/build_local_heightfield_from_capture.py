@@ -78,7 +78,6 @@ def main() -> None:
         elevation_for_costmap,
         unknown_obstacles,
         resolution=heightfield.resolution,
-        max_slope=1.0,
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -97,6 +96,10 @@ def main() -> None:
         costmap_path,
         cost=costmap.cost,
         slope=costmap.slope,
+        climb_risk=costmap.climb_risk,
+        side_slope_risk=costmap.side_slope_risk,
+        slope_margin=costmap.slope_margin,
+        traversability_class=costmap.traversability_class,
         traversable_mask=costmap.traversable_mask,
         origin_xy=np.asarray(heightfield.origin_xy, dtype=np.float32),
         resolution=np.asarray(heightfield.resolution, dtype=np.float32),
@@ -146,18 +149,31 @@ def _fill_unknown_elevation(elevation: np.ndarray) -> np.ndarray:
 
 def _plot_costmap(costmap, path: Path) -> None:
     visible_cost = np.ma.masked_where(costmap.cost >= 1_000_000.0, costmap.cost)
-    fig, ax = plt.subplots(figsize=(8, 6), constrained_layout=True)
-    image = ax.imshow(visible_cost, cmap="viridis", origin="lower")
-    ax.imshow(
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5), constrained_layout=True)
+    image = axes[0].imshow(visible_cost, cmap="viridis", origin="lower")
+    axes[0].imshow(
         np.ma.masked_where(costmap.cost < 1_000_000.0, costmap.cost),
         cmap="gray",
         alpha=0.55,
         origin="lower",
     )
-    ax.set_title("Local cost map from Isaac depth")
-    ax.set_xlabel("grid x")
-    ax.set_ylabel("grid y")
-    fig.colorbar(image, ax=ax, label="cost")
+    axes[0].set_title("Local cost map from Isaac depth")
+    axes[0].set_xlabel("grid x")
+    axes[0].set_ylabel("grid y")
+    fig.colorbar(image, ax=axes[0], label="cost")
+
+    classes = np.ma.masked_where(~costmap.traversable_mask, costmap.traversability_class)
+    class_image = axes[1].imshow(classes, cmap="viridis", vmin=0, vmax=3, origin="lower")
+    axes[1].imshow(
+        np.ma.masked_where(costmap.traversable_mask, costmap.traversable_mask),
+        cmap="gray",
+        alpha=0.55,
+        origin="lower",
+    )
+    axes[1].set_title("Tracked rover traversability")
+    axes[1].set_xlabel("grid x")
+    axes[1].set_ylabel("grid y")
+    fig.colorbar(class_image, ax=axes[1], label="0 safe, 1 cautious, 2 marginal, 3 blocked")
     fig.savefig(path, dpi=160)
     plt.close(fig)
 
