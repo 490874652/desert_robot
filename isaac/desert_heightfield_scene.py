@@ -34,23 +34,26 @@ def main() -> None:
     print("Stage created.", flush=True)
 
     terrain = generate_desert_heightfield(
-        size=(144, 144),
+        size=(180, 180),
         resolution=0.15,
         seed=42,
-        dune_count=10,
-        obstacle_count=18,
+        dune_count=7,
+        obstacle_count=12,
     )
+    elevation = _smooth_heightfield(terrain.elevation, passes=3)
     print("Procedural desert heightfield generated.", flush=True)
 
     _create_world(stage)
     print("World root and physics scene created.", flush=True)
-    _add_desert_mesh(stage, terrain.elevation, terrain.resolution)
+    _add_desert_mesh(stage, elevation, terrain.resolution)
     print("Desert terrain mesh added.", flush=True)
-    _add_obstacle_markers(stage, terrain.elevation, terrain.obstacle_mask, terrain.resolution)
+    _add_ground_reference(stage, elevation, terrain.resolution)
+    print("Ground reference markers added.", flush=True)
+    _add_obstacle_markers(stage, elevation, terrain.obstacle_mask, terrain.resolution)
     print("Obstacle markers added.", flush=True)
-    _add_rover_placeholder(stage, terrain.elevation, terrain.resolution)
+    _add_rover_placeholder(stage, elevation, terrain.resolution)
     print("Rover placeholder added.", flush=True)
-    _add_goal_marker(stage, terrain.elevation, terrain.resolution)
+    _add_goal_marker(stage, elevation, terrain.resolution)
     print("Goal marker added.", flush=True)
     _add_light(stage)
     _add_camera(stage)
@@ -122,6 +125,29 @@ def _add_obstacle_markers(stage, elevation, obstacle_mask, resolution: float) ->
         _bind_material(stage, rock.GetPrim(), "/World/Materials/Rock")
 
 
+def _add_ground_reference(stage, elevation, resolution: float) -> None:
+    height, width = elevation.shape
+    x_extent = (width - 1) * resolution * 0.5
+    y_extent = (height - 1) * resolution * 0.5
+    spacing = 3.0
+    x_values = np.arange(-x_extent, x_extent + 1e-6, spacing)
+    y_values = np.arange(-y_extent, y_extent + 1e-6, spacing)
+
+    for index, x in enumerate(x_values):
+        line = UsdGeom.Cube.Define(stage, f"/World/GroundReference/XLine_{index:03d}")
+        line.CreateSizeAttr(1.0)
+        line.AddScaleOp().Set(Gf.Vec3f(0.012, y_extent, 0.004))
+        line.AddTranslateOp().Set(Gf.Vec3f(float(x), 0.0, _sample_elevation(elevation, resolution, float(x), 0.0) + 0.012))
+        line.CreateDisplayColorAttr([Gf.Vec3f(0.38, 0.30, 0.18)])
+
+    for index, y in enumerate(y_values):
+        line = UsdGeom.Cube.Define(stage, f"/World/GroundReference/YLine_{index:03d}")
+        line.CreateSizeAttr(1.0)
+        line.AddScaleOp().Set(Gf.Vec3f(x_extent, 0.012, 0.004))
+        line.AddTranslateOp().Set(Gf.Vec3f(0.0, float(y), _sample_elevation(elevation, resolution, 0.0, float(y)) + 0.012))
+        line.CreateDisplayColorAttr([Gf.Vec3f(0.38, 0.30, 0.18)])
+
+
 def _add_rover_placeholder(stage, elevation, resolution: float) -> None:
     row, col = 10, 10
     x, y, z = _grid_to_world(row, col, elevation, resolution)
@@ -168,6 +194,45 @@ def _grid_to_world(row: int, col: int, elevation, resolution: float) -> tuple[fl
     return x, y, z
 
 
+def _smooth_heightfield(elevation, passes: int) -> np.ndarray:
+    smoothed = elevation.astype(np.float32).copy()
+    for _ in range(passes):
+        padded = np.pad(smoothed, 1, mode="edge")
+        smoothed = (
+            4.0 * padded[1:-1, 1:-1]
+            + 2.0 * padded[:-2, 1:-1]
+            + 2.0 * padded[2:, 1:-1]
+            + 2.0 * padded[1:-1, :-2]
+            + 2.0 * padded[1:-1, 2:]
+            + padded[:-2, :-2]
+            + padded[:-2, 2:]
+            + padded[2:, :-2]
+            + padded[2:, 2:]
+        ) / 16.0
+    smoothed -= float(smoothed.min())
+    return smoothed.astype(np.float32)
+
+
+def _sample_elevation(elevation, resolution: float, x: float, y: float) -> float:
+    height, width = elevation.shape
+    col = x / resolution + (width - 1) * 0.5
+    row = y / resolution + (height - 1) * 0.5
+    col = float(np.clip(col, 0.0, width - 1.0))
+    row = float(np.clip(row, 0.0, height - 1.0))
+    c0 = int(np.floor(col))
+    r0 = int(np.floor(row))
+    c1 = min(c0 + 1, width - 1)
+    r1 = min(r0 + 1, height - 1)
+    fc = col - c0
+    fr = row - r0
+    return float(
+        elevation[r0, c0] * (1.0 - fr) * (1.0 - fc)
+        + elevation[r0, c1] * (1.0 - fr) * fc
+        + elevation[r1, c0] * fr * (1.0 - fc)
+        + elevation[r1, c1] * fr * fc
+    )
+
+
 def _create_material(stage, path: str, color: tuple[float, float, float], roughness: float) -> None:
     material = UsdShade.Material.Define(stage, path)
     shader = UsdShade.Shader.Define(stage, f"{path}/PreviewSurface")
@@ -197,15 +262,16 @@ def _set_vertex_colors(mesh: UsdGeom.Mesh, elevation) -> None:
     normalized = (elevation - float(elevation.min())) / max(float(np.ptp(elevation)), 1e-6)
     height, width = elevation.shape
     yy, xx = np.mgrid[0:height, 0:width]
-    ripple = 0.5 + 0.5 * np.sin(xx * 0.23 + yy * 0.09)
-    warmth = np.clip(0.68 + 0.16 * normalized + 0.08 * ripple, 0.0, 1.0)
+    ripple = 0.5 + 0.5 * np.sin(xx * 0.35 + yy * 0.12)
+    fine_ripple = 0.5 + 0.5 * np.sin(xx * 1.15 + yy * 0.32)
+    shade = np.clip(0.62 + 0.24 * normalized + 0.07 * ripple + 0.03 * fine_ripple, 0.0, 1.0)
     colors = [
         Gf.Vec3f(float(r), float(g), float(b))
         for r, g, b in np.column_stack(
             [
-                warmth.reshape(-1),
-                (0.50 + 0.10 * normalized + 0.04 * ripple).reshape(-1),
-                (0.28 + 0.06 * normalized).reshape(-1),
+                shade.reshape(-1),
+                (0.48 + 0.16 * normalized + 0.05 * ripple).reshape(-1),
+                (0.24 + 0.08 * normalized + 0.02 * fine_ripple).reshape(-1),
             ]
         )
     ]
